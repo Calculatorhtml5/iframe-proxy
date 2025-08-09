@@ -30,19 +30,44 @@ function rewriteHTML(html, baseUrl, proxyBase) {
   return dom.serialize();
 }
 
+// Handle CORS preflight requests
+app.options("/proxy", (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+  res.sendStatus(204);
+});
+
 app.get("/proxy", async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).send("Missing ?url=");
 
   try {
-    const r = await fetch(targetUrl);
+    // Forward client headers including cookies
+    const headers = { ...req.headers };
+    delete headers.host; // Remove host header to avoid conflicts
+
+    const r = await fetch(targetUrl, { headers });
     const type = r.headers.get("content-type") || "";
+
+    // Forward important headers like Set-Cookie back to client
+    r.headers.forEach((value, key) => {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === "set-cookie" || lowerKey === "access-control-allow-origin") {
+        res.setHeader(key, value);
+      }
+    });
+
+    // Add CORS headers to proxy response
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+
     res.removeHeader("X-Frame-Options");
     res.removeHeader("Content-Security-Policy");
 
     if (type.includes("text/html")) {
       const html = await r.text();
-      // Force https in proxyBase to avoid mixed content errors
       const rewritten = rewriteHTML(
         html,
         targetUrl,
