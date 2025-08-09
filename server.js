@@ -42,10 +42,11 @@ app.get("/proxy", async (req, res) => {
 
     if (type.includes("text/html")) {
       const html = await r.text();
+      // Force https in proxyBase to avoid mixed content errors
       const rewritten = rewriteHTML(
         html,
         targetUrl,
-        `${req.protocol}://${req.get("host")}/proxy`
+        `https://${req.get("host")}/proxy`
       );
       res.set("Content-Type", "text/html");
       res.send(rewritten);
@@ -59,4 +60,6 @@ app.get("/proxy", async (req, res) => {
   }
 });
 
-app.listen(3000, () => console.log("Proxy running on port 3000"));
+app.listen(process.env.PORT || 3000, () =>
+  console.log("Proxy running on port", process.env.PORT || 3000)
+);
