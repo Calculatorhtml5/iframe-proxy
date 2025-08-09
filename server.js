@@ -6,11 +6,12 @@ import { JSDOM } from "jsdom";
 const app = express();
 app.use(cors());
 
-// Rewrite all src/href URLs to go through our proxy
+// Rewrite only HTML content, adjust URLs to proxy for relative links
 function rewriteHTML(html, baseUrl, proxyBase) {
   const dom = new JSDOM(html);
   const doc = dom.window.document;
 
+  // Rewrite src attributes (images, scripts, wasm, etc.)
   doc.querySelectorAll("[src]").forEach(el => {
     let url = el.getAttribute("src");
     if (url && !url.startsWith("data:")) {
@@ -19,6 +20,7 @@ function rewriteHTML(html, baseUrl, proxyBase) {
     }
   });
 
+  // Rewrite href attributes (links, stylesheets)
   doc.querySelectorAll("[href]").forEach(el => {
     let url = el.getAttribute("href");
     if (url && !url.startsWith("data:") && !url.startsWith("#")) {
@@ -47,11 +49,12 @@ app.get("/proxy", async (req, res) => {
     const headers = { ...req.headers };
     delete headers.host; // Remove host header to avoid conflicts
 
-    const r = await fetch(targetUrl, { headers });
-    const type = r.headers.get("content-type") || "";
+    const response = await fetch(targetUrl, { headers });
+
+    const contentType = response.headers.get("content-type") || "";
 
     // Forward important headers like Set-Cookie back to client
-    r.headers.forEach((value, key) => {
+    response.headers.forEach((value, key) => {
       const lowerKey = key.toLowerCase();
       if (lowerKey === "set-cookie" || lowerKey === "access-control-allow-origin") {
         res.setHeader(key, value);
@@ -66,8 +69,13 @@ app.get("/proxy", async (req, res) => {
     res.removeHeader("X-Frame-Options");
     res.removeHeader("Content-Security-Policy");
 
-    if (type.includes("text/html")) {
-      const html = await r.text();
+    // Add Cache-Control for static files to speed up loading
+    if (!contentType.includes("text/html")) {
+      res.setHeader("Cache-Control", "public, max-age=86400"); // cache 1 day
+    }
+
+    if (contentType.includes("text/html")) {
+      const html = await response.text();
       const rewritten = rewriteHTML(
         html,
         targetUrl,
@@ -76,9 +84,10 @@ app.get("/proxy", async (req, res) => {
       res.set("Content-Type", "text/html");
       res.send(rewritten);
     } else {
-      res.set("Content-Type", type);
-      const buf = await r.arrayBuffer();
-      res.send(Buffer.from(buf));
+      // Stream non-HTML content directly with proper Content-Type
+      res.set("Content-Type", contentType);
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
     }
   } catch (err) {
     res.status(500).send("Proxy error: " + err.message);
